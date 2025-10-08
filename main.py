@@ -342,111 +342,131 @@ def solve_http(request: Request):
     params.first_solution_strategy = routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
     params.local_search_metaheuristic = routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
     params.time_limit.seconds = time_limit_sec
+    params.log_search = True
 
     sol = routing.SolveWithParameters(params)
-    if not sol:
-        return jsonify({"solutionFound": False, "message": "No solution found"}), 200
+    status = routing.status()
 
-    # ---------------------------
-    # Extract solution
-    # ---------------------------
-    out = {
-        "solutionFound": True,
-        "vehicles": [],
-        "request_assignments": {},
-        "unserved_requests": []
-    }
+    if status == pywrapcp.RoutingModel.ROUTING_SUCCESS:
 
-    # Multi-valued node metadata: which request IDs pick up / drop at each instance node
-    node_meta = {depot_node_index: {"pickups": [], "dropoffs": []}}
-    for i, r in enumerate(reqs):
-        rid = r.get("id", f"request_{i}")
-        p_node, d_node = request_node_indices[rid]
-        node_meta.setdefault(p_node, {"pickups": [], "dropoffs": []})["pickups"].append(rid)
-        node_meta.setdefault(d_node, {"pickups": [], "dropoffs": []})["dropoffs"].append(rid)
+        # ---------------------------
+        # Extract solution
+        # ---------------------------
+        out = {
+            "solutionFound": True,
+            "vehicles": [],
+            "request_assignments": {},
+            "unserved_requests": []
+        }
 
-    def cumul(idx): return sol.Value(time_dim.CumulVar(idx))
+        # Multi-valued node metadata: which request IDs pick up / drop at each instance node
+        node_meta = {depot_node_index: {"pickups": [], "dropoffs": []}}
+        for i, r in enumerate(reqs):
+            rid = r.get("id", f"request_{i}")
+            p_node, d_node = request_node_indices[rid]
+            node_meta.setdefault(p_node, {"pickups": [], "dropoffs": []})["pickups"].append(rid)
+            node_meta.setdefault(d_node, {"pickups": [], "dropoffs": []})["dropoffs"].append(rid)
 
-    # Per-vehicle routes
-    for v in range(n_veh):
-        idx = routing.Start(v)
-        route = []
-        served_rids_for_vehicle = set()
+        def cumul(idx): return sol.Value(time_dim.CumulVar(idx))
 
-        # First node (depot start)
-        node = manager.IndexToNode(idx)
-        depart = cumul(idx)
-        arrive = depart - (svc[node] if node != depot_node_index else 0)
-        meta = node_meta.get(node, {"pickups": [], "dropoffs": []})
-        served_rids_for_vehicle.update(meta["pickups"])
-        served_rids_for_vehicle.update(meta["dropoffs"])
-        route.append({
-            "node": node,
-            "base_loc_index": instance_to_base[node],
-            "pickups": meta["pickups"],      # list of request IDs
-            "dropoffs": meta["dropoffs"],    # list of request IDs
-            "arrival_minute": int(arrive),
-            "departure_minute": int(depart),
-            "wait_minutes": 0
-        })
+        # Per-vehicle routes
+        for v in range(n_veh):
+            idx = routing.Start(v)
+            route = []
+            served_rids_for_vehicle = set()
 
-        # Walk the chain
-        while not routing.IsEnd(idx):
-            prev_idx = idx
-            idx = sol.Value(routing.NextVar(idx))
-            prev_node = manager.IndexToNode(prev_idx)
+            # First node (depot start)
             node = manager.IndexToNode(idx)
-
-            travel = tm[prev_node][node]
-            depart_prev = cumul(prev_idx)
-            depart_cur  = cumul(idx)
-            arrive_cur  = depart_cur - (svc[node] if node != depot_node_index else 0)
-            min_arrival_if_no_wait = depart_prev + travel
-            wait = max(0, arrive_cur - min_arrival_if_no_wait)
-
+            depart = cumul(idx)
+            arrive = depart - (svc[node] if node != depot_node_index else 0)
             meta = node_meta.get(node, {"pickups": [], "dropoffs": []})
             served_rids_for_vehicle.update(meta["pickups"])
             served_rids_for_vehicle.update(meta["dropoffs"])
             route.append({
                 "node": node,
                 "base_loc_index": instance_to_base[node],
-                "pickups": meta["pickups"],
-                "dropoffs": meta["dropoffs"],
-                "arrival_minute": int(arrive_cur),
-                "departure_minute": int(depart_cur),
-                "wait_minutes": int(wait)
+                "pickups": meta["pickups"],      # list of request IDs
+                "dropoffs": meta["dropoffs"],    # list of request IDs
+                "arrival_minute": int(arrive),
+                "departure_minute": int(depart),
+                "wait_minutes": 0
             })
 
-        out["vehicles"].append({
-            "vehicle": v,                     # numeric solver index
-            "vehicle_id": vehicle_ids[v],     # stable external ID from input
-            "route": route,
-            "requests": sorted(served_rids_for_vehicle)
-        })
+            # Walk the chain
+            while not routing.IsEnd(idx):
+                prev_idx = idx
+                idx = sol.Value(routing.NextVar(idx))
+                prev_node = manager.IndexToNode(prev_idx)
+                node = manager.IndexToNode(idx)
 
-    # Direct request -> vehicle mapping with timestamps
-    for i, r in enumerate(reqs):
-        rid = r.get("id", f"request_{i}")
-        p_node, d_node = request_node_indices[rid]
-        pI, dI = manager.NodeToIndex(p_node), manager.NodeToIndex(d_node)
+                travel = tm[prev_node][node]
+                depart_prev = cumul(prev_idx)
+                depart_cur  = cumul(idx)
+                arrive_cur  = depart_cur - (svc[node] if node != depot_node_index else 0)
+                min_arrival_if_no_wait = depart_prev + travel
+                wait = max(0, arrive_cur - min_arrival_if_no_wait)
 
-        if sol.Value(routing.ActiveVar(pI)) == 1:
-            v = sol.Value(routing.VehicleVar(pI))
-            p_depart = cumul(pI); d_depart = cumul(dI)
-            p_arrive = p_depart - (svc[p_node] if p_node != depot_node_index else 0)
-            d_arrive = d_depart - (svc[d_node] if d_node != depot_node_index else 0)
+                meta = node_meta.get(node, {"pickups": [], "dropoffs": []})
+                served_rids_for_vehicle.update(meta["pickups"])
+                served_rids_for_vehicle.update(meta["dropoffs"])
+                route.append({
+                    "node": node,
+                    "base_loc_index": instance_to_base[node],
+                    "pickups": meta["pickups"],
+                    "dropoffs": meta["dropoffs"],
+                    "arrival_minute": int(arrive_cur),
+                    "departure_minute": int(depart_cur),
+                    "wait_minutes": int(wait)
+                })
 
-            out["request_assignments"][rid] = {
-                "vehicle": v,
-                "vehicle_id": vehicle_ids[v],
-                "pickup_node": p_node,
-                "pickup_base_loc_index": instance_to_base[p_node],
-                "dropoff_node": d_node,
-                "dropoff_base_loc_index": instance_to_base[d_node],
-                "pickup":  {"arrival_minute": int(p_arrive), "departure_minute": int(p_depart)},
-                "dropoff": {"arrival_minute": int(d_arrive), "departure_minute": int(d_depart)}
-            }
-        else:
-            out["unserved_requests"].append(rid)
+            out["vehicles"].append({
+                "vehicle": v,                     # numeric solver index
+                "vehicle_id": vehicle_ids[v],     # stable external ID from input
+                "route": route,
+                "requests": sorted(served_rids_for_vehicle)
+            })
 
-    return jsonify(out), 200
+        # Direct request -> vehicle mapping with timestamps
+        for i, r in enumerate(reqs):
+            rid = r.get("id", f"request_{i}")
+            p_node, d_node = request_node_indices[rid]
+            pI, dI = manager.NodeToIndex(p_node), manager.NodeToIndex(d_node)
+
+            if sol.Value(routing.ActiveVar(pI)) == 1:
+                v = sol.Value(routing.VehicleVar(pI))
+                p_depart = cumul(pI); d_depart = cumul(dI)
+                p_arrive = p_depart - (svc[p_node] if p_node != depot_node_index else 0)
+                d_arrive = d_depart - (svc[d_node] if d_node != depot_node_index else 0)
+
+                out["request_assignments"][rid] = {
+                    "vehicle": v,
+                    "vehicle_id": vehicle_ids[v],
+                    "pickup_node": p_node,
+                    "pickup_base_loc_index": instance_to_base[p_node],
+                    "dropoff_node": d_node,
+                    "dropoff_base_loc_index": instance_to_base[d_node],
+                    "pickup":  {"arrival_minute": int(p_arrive), "departure_minute": int(p_depart)},
+                    "dropoff": {"arrival_minute": int(d_arrive), "departure_minute": int(d_depart)}
+                }
+            else:
+                out["unserved_requests"].append(rid)
+
+        return jsonify(out), 200
+
+    elif status == pywrapcp.RoutingModel.ROUTING_FAIL:
+        return jsonify({
+            "solutionFound": False,
+            "message": "No solution found. The problem is likely over-constrained or infeasible."
+        }), 200
+
+    elif status == pywrapcp.RoutingModel.ROUTING_FAIL_TIMEOUT:
+        return jsonify({
+            "solutionFound": False,
+            "message": "Solver timed out before finding a solution. The problem may be too complex for the given time limit."
+        }), 200
+
+    else: # ROUTING_NOT_SOLVED or other issues
+        return jsonify({
+            "solutionFound": False,
+            "message": f"Solver failed with an unexpected status: {status}"
+        }), 200
