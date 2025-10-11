@@ -361,6 +361,7 @@ def solve_http(request: Request):
         4: "ROUTING_FAIL_TIMEOUT",
         5: "ROUTING_INVALID",
         6: "ROUTING_INFEASIBLE",
+        7: "ROUTING_OPTIMAL"
     }
     status_msg = status_map.get(status, f"Unknown status code {status}")
 
