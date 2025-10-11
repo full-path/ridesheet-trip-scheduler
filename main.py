@@ -317,8 +317,6 @@ def solve_http(request: Request):
         pI, dI = manager.NodeToIndex(p_node), manager.NodeToIndex(d_node)
 
         routing.AddPickupAndDelivery(pI, dI)
-        routing.solver().Add(routing.VehicleVar(pI) == routing.VehicleVar(dI))
-        routing.solver().Add(time_dim.CumulVar(pI) <= time_dim.CumulVar(dI))
 
         if "pickup_tw" in r:
             lo, hi = r["pickup_tw"]
@@ -328,14 +326,16 @@ def solve_http(request: Request):
             time_dim.CumulVar(dI).SetRange(int(lo), int(hi))
 
         max_ride = int(r.get("max_ride", default_max_ride))
-        # Ride measured from pickup departure to dropoff arrival:
-        routing.solver().Add(
-            time_dim.CumulVar(dI) - svc[d_node] - time_dim.CumulVar(pI) <= max_ride
-        )
-
         penalty = int(r.get("penalty", default_penalty))
-        routing.solver().Add(routing.ActiveVar(pI) == routing.ActiveVar(dI))
+        act_p = routing.ActiveVar(pI)
+        act_d = routing.ActiveVar(dI)
+        # Make the pair optional as a unit
+        routing.solver().Add(act_p == act_d)
         routing.AddDisjunction([pI], penalty)
+        # Only enforce if the pair is active
+        routing.solver().Add(time_dim.CumulVar(pI) <= time_dim.CumulVar(dI)).OnlyEnforceIf(act_p)
+        routing.solver().Add(routing.VehicleVar(pI) == routing.VehicleVar(dI)).OnlyEnforceIf(act_p)
+        routing.solver().Add(time_dim.CumulVar(dI) - svc[d_node] - time_dim.CumulVar(pI) <= max_ride).OnlyEnforceIf(act_p)
 
     # Search
     params = pywrapcp.DefaultRoutingSearchParameters()
