@@ -333,9 +333,9 @@ def solve_http(request: Request):
         routing.solver().Add(act_p == act_d)
         routing.AddDisjunction([pI], penalty)
         # Only enforce if the pair is active
-        routing.solver().Add(time_dim.CumulVar(pI) <= time_dim.CumulVar(dI)).OnlyEnforceIf(act_p)
-        routing.solver().Add(routing.VehicleVar(pI) == routing.VehicleVar(dI)).OnlyEnforceIf(act_p)
-        routing.solver().Add(time_dim.CumulVar(dI) - svc[d_node] - time_dim.CumulVar(pI) <= max_ride).OnlyEnforceIf(act_p)
+        routing.solver().Add(time_dim.CumulVar(pI) <= time_dim.CumulVar(dI)).only_enforce_if(act_p)
+        routing.solver().Add(routing.VehicleVar(pI) == routing.VehicleVar(dI)).only_enforce_if(act_p)
+        routing.solver().Add(time_dim.CumulVar(dI) - svc[d_node] - time_dim.CumulVar(pI) <= max_ride).only_enforce_if(act_p)
 
     # Search
     params = pywrapcp.DefaultRoutingSearchParameters()
