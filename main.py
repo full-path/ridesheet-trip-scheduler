@@ -178,6 +178,7 @@ def _validate_input(body: dict):
 # Cloud Function
 # ---------------------------
 
+@functions_framework.http
 def solve_http(request: Request):
     """
     Entry point. Expects a base (unduplicated) travel-time matrix over unique locations,
@@ -202,7 +203,8 @@ def solve_http(request: Request):
       "horizon_minutes": 1440,
       "solver_time_limit_sec": 5,
       "default_penalty": 5000,
-      "default_max_ride_minutes": 120
+      "default_max_ride_minutes": 120,
+      "log_search": false
     }
     """
     body = request.get_json(force=True, silent=True) or {}
@@ -349,7 +351,7 @@ def solve_http(request: Request):
     params.first_solution_strategy = routing_enums_pb2.FirstSolutionStrategy.PARALLEL_CHEAPEST_INSERTION
     params.local_search_metaheuristic = routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
     params.time_limit.seconds = time_limit_sec
-    params.log_search = True
+    params.log_search = bool(body.get("log_search", False))
 
     sol = routing.SolveWithParameters(params)
     status = routing.status()
