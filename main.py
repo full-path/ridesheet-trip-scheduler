@@ -325,17 +325,24 @@ def solve_http(request: Request):
             lo, hi = r["dropoff_tw"]
             time_dim.CumulVar(dI).SetRange(int(lo), int(hi))
 
-        max_ride = int(r.get("max_ride", default_max_ride))
-        penalty = int(r.get("penalty", default_penalty))
-        act_p = routing.ActiveVar(pI)
-        act_d = routing.ActiveVar(dI)
-        # Make the pair optional as a unit
-        routing.solver().Add(act_p == act_d)
-        routing.AddDisjunction([pI], penalty)
-        # Only enforce if the pair is active
+        # Set the penalty for dropping a trip
+        penalty_per_index = int(r.get("penalty", default_penalty) / 2)
+        routing.AddDisjunction([dI], penalty_per_index)
+        routing.AddDisjunction([pI], penalty_per_index)
+
+        # CONSTRAINTS
+        # Both the pickup and drop-off must be dropped as a unit
+        is_pu_active = routing.ActiveVar(pI)
+        is_do_active = routing.ActiveVar(dI)
+        routing.solver().Add(is_pu_active == is_do_active)
+        # Pickup must be before drop-off
         routing.solver().Add(time_dim.CumulVar(pI) <= time_dim.CumulVar(dI))
+        # Pickup and dropoff must occur on the same vehicle
         routing.solver().Add(routing.VehicleVar(pI) == routing.VehicleVar(dI))
-        routing.solver().Add(time_dim.CumulVar(dI) - svc[d_node] - time_dim.CumulVar(pI) <= max_ride)
+        # Rider travel time cannot exceed max_ride, were travel time equals
+        # the time from departing the pickup location to departing the drop-off location
+        max_ride = int(r.get("max_ride", default_max_ride))
+        routing.solver().Add(time_dim.CumulVar(dI) - time_dim.CumulVar(pI) <= max_ride)
 
     # Search
     params = pywrapcp.DefaultRoutingSearchParameters()
