@@ -335,7 +335,7 @@ def solve_http(request: Request):
 
         penalty = int(r.get("penalty", default_penalty))
         routing.solver().Add(routing.ActiveVar(pI) == routing.ActiveVar(dI))
-        routing.AddDisjunction([pI, dI], penalty)
+        routing.AddDisjunction([pI], penalty)
 
     # Search
     params = pywrapcp.DefaultRoutingSearchParameters()
